@@ -47,15 +47,35 @@ public class ColombianFootballController {
             method = RequestMethod.GET,
             produces = { MediaType.APPLICATION_JSON_VALUE })
     public ResponseEntity<Tournament> getAllMatches(@PathVariable("year") int year, @PathVariable("tournament") TOURNAMENT_TYPE tournamentType) {
+        Tournament tournament = buildTournmament(tournamentType, year, Optional.empty());
+        if (tournament == null) {
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
+        return new ResponseEntity<>(tournament, HttpStatus.OK);
+    }
+
+    @RequestMapping(
+            value = "/todosLosPartidos/{year}/torneo/{tournament}/fecha/{round}",
+            method = RequestMethod.GET,
+            produces = { MediaType.APPLICATION_JSON_VALUE })
+    public ResponseEntity<Tournament> getAllMatchesByRound(@PathVariable("year") int year, @PathVariable("tournament") TOURNAMENT_TYPE tournamentType, @PathVariable("round") int round) {
+        Tournament tournament = buildTournmament(tournamentType, year, Optional.of(round));
+        if (tournament == null) {
+            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+        }
+        return new ResponseEntity<>(tournament, HttpStatus.OK);
+    }
+
+    private Tournament buildTournmament(TOURNAMENT_TYPE tournamentType, int year, Optional<Integer> round) {
         String tournamentId =  ID_BY_TOURNAMENT.get(tournamentType);
         if (tournamentId == null) {
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+            return null;
         }
         JSONObject allMatches;
         try {
             allMatches = new JSONObject(dimayorRestClient.get("summary/" + tournamentId + "/" + year + "/all.json"));
         } catch(HttpClientErrorException e) {
-            return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+            return null;
         }
         Tournament tournament = new Tournament();
         tournament.setName((String) allMatches.getJSONObject("competition").get("name"));
@@ -77,18 +97,29 @@ public class ColombianFootballController {
                 try {
                     allMatchesInRound = new JSONObject(dimayorRestClient.get("schedules/" + tournamentId + "/" + year + "/rounds/" + roundId + ".json"));
                 } catch(HttpClientErrorException e) {
-                    return new ResponseEntity<>(HttpStatus.NOT_FOUND);
+                    return null;
                 }
-                JSONObject matches = allMatchesInRound.getJSONObject("matches");
-                for (String matchId : matches.keySet()) {
-                    JSONObject match =  matches.getJSONObject(matchId);
+                Object matches = allMatchesInRound.get("matches");
+                Iterator matchesIt;
+                if (matches instanceof JSONArray) {
+                    matchesIt = ((JSONArray) matches).iterator();
+                } else {
+                    matchesIt = ((JSONObject) matches).keys();
+                }
+                int currentRound = (Integer) allMatchesInRound.getJSONObject("round").get("number");
+                if (round.isPresent() && round.get() != currentRound) {
+                    continue;
+                }
+                for (Iterator it1 = matchesIt; it1.hasNext(); ) {
+                    String matchId = (String) it1.next();
+                    JSONObject match =  ((JSONObject) matches).getJSONObject(matchId);
 
                     Match newMatch = new Match();
                     newMatch.setLocal((String) match.getJSONObject("home").get("name"));
                     newMatch.setVisitor((String) match.getJSONObject("away").get("name"));
                     newMatch.setMatchDate(DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss Z").parseDateTime(match.get("date") + " -05:00"));
                     newMatch.setStadium((String) match.get("venue_name"));
-                    newMatch.setRound((Integer) allMatchesInRound.getJSONObject("round").get("number"));
+                    newMatch.setRound(currentRound);
 
                     String cityByStadium;
                     try {
@@ -102,9 +133,7 @@ public class ColombianFootballController {
             }
         }
         tournament.getMatches().sort(Comparator.comparing(Match::getComparatorTime));
-
-        return new ResponseEntity<>(tournament, HttpStatus.OK);
+        return tournament;
     }
-
 
 }
